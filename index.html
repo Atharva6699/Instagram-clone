@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Instagram 2025</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        ig: {
+                            primary: '#000000',
+                            secondary: '#262626',
+                            link: '#0095f6',
+                            danger: '#ed4956'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Grand+Hotel&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Config ---
+        const myFirebaseConfig = {
+            apiKey: "AIzaSyC-VE_rKnSR7vuwDG90J1t1orU5bRUaK0U",
+            authDomain: "instagram-clone-a95ac.firebaseapp.com",
+            projectId: "instagram-clone-a95ac",
+            storageBucket: "instagram-clone-a95ac.firebasestorage.app",
+            messagingSenderId: "408954423768",
+            appId: "1:408954423768:web:6e7f3e0527e54a11ae0aad",
+            measurementId: "G-LJVN2MHXDE"
+        };
+
+        const firebaseConfig = (myFirebaseConfig.apiKey) 
+            ? myFirebaseConfig 
+            : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {});
+            
+        let app, auth, db;
+        let initError = null;
+
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            initError = e.message;
+            updateStatus('Config Error: ' + e.message, 'error');
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app';
+        let currentUser = null;
+        
+        // Chat State
+        let activeListenerUnsubscribe = null;
+        let currentChatRoom = 'global_public'; // Default room
+
+        async function initApp() {
+            if (initError) return;
+            updateStatus('Connecting...', 'loading');
+
+            try {
+                if (myFirebaseConfig.apiKey) {
+                    await signInAnonymously(auth);
+                } else if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) {
+                console.error("Auth failed:", e);
+                initError = e;
+                updateStatus("Connection Error: " + e.message, 'error');
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    currentUser = user;
+                    updateStatus('Online', 'success');
+                    
+                    // --- AUTO-JOIN ROOM LOGIC ---
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const roomFromUrl = urlParams.get('room');
+                    if (roomFromUrl) {
+                        const cleanRoomName = roomFromUrl.replace(/[^a-z0-9-_]/g, '');
+                        // Automatically open chat and join the room
+                        document.getElementById('chat-view').classList.remove('translate-x-full');
+                        window.joinRoom('room_' + cleanRoomName, '#' + cleanRoomName);
+                    }
+                }
+            });
+        }
+
+        function updateStatus(text, type) {
+            const bar = document.getElementById('debug-bar');
+            bar.innerText = text;
+            bar.classList.remove('bg-gray-800', 'bg-green-600', 'bg-red-600', 'hidden');
+            if (type === 'success') {
+                bar.classList.add('bg-green-600');
+                setTimeout(() => bar.classList.add('hidden'), 3000);
+            } else if (type === 'error') {
+                bar.classList.add('bg-red-600');
+            } else {
+                bar.classList.add('bg-gray-800');
+            }
+        }
+
+        // --- Chat Logic ---
+        
+        // Expose to window for HTML access
+        window.joinRoom = function(roomName, displayTitle) {
+            // UI Logic
+            document.getElementById('inbox-view').classList.add('hidden');
+            document.getElementById('conversation-view').classList.remove('hidden');
+            
+            // Set Header Info
+            document.getElementById('chat-room-title').innerText = displayTitle || roomName;
+            
+            // Logic Logic
+            subscribeToRoom(roomName);
+        }
+        
+        window.backToInbox = function() {
+            document.getElementById('inbox-view').classList.remove('hidden');
+            document.getElementById('conversation-view').classList.add('hidden');
+            
+            // Unsubscribe to save bandwidth/confusion
+            if(activeListenerUnsubscribe) activeListenerUnsubscribe();
+        }
+        
+        window.promptJoinRoom = function() {
+            const roomCode = prompt("Enter a secret Room Name (e.g., 'pizza-night'):");
+            if(roomCode && roomCode.trim().length > 0) {
+                const cleanCode = roomCode.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+                window.joinRoom('room_' + cleanCode, '#' + cleanCode);
+            }
+        }
+        
+        window.openQR = function() {
+            // Construct the deep link URL with the current chat room name
+            const currentUrl = window.location.href.split('?')[0]; // Base URL
+            const roomNameForLink = currentChatRoom.replace('room_', ''); // Get simple name
+            const deepLink = `${currentUrl}?room=${roomNameForLink}`;
+            
+            // Generate QR code for the deep link
+            const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(deepLink)}&color=000000&bgcolor=ffffff`;
+            
+            document.getElementById('qr-image').src = qrCodeUrl;
+            document.getElementById('qr-room-name').innerText = roomNameForLink;
+            document.getElementById('qr-modal').classList.remove('hidden');
+        }
+        
+        window.closeQR = function() {
+            document.getElementById('qr-modal').classList.add('hidden');
+        }
+
+        function subscribeToRoom(roomName) {
+            if (!db) return;
+            
+            currentChatRoom = roomName;
+
+            // Unsubscribe previous
+            if (activeListenerUnsubscribe) activeListenerUnsubscribe();
+
+            const collectionId = `instagram_msg_${roomName}`;
+            console.log("Joining collection:", collectionId);
+
+            const q = query(
+                collection(db, 'artifacts', appId, 'public', 'data', collectionId),
+                orderBy('timestamp', 'asc'),
+                limit(50)
+            );
+
+            activeListenerUnsubscribe = onSnapshot(q, (snapshot) => {
+                const chatBox = document.getElementById('chat-messages');
+                chatBox.innerHTML = '';
+                
+                // Date separator
+                const dateSep = document.createElement('div');
+                dateSep.className = "flex justify-center my-4";
+                dateSep.innerHTML = `<div class="text-xs text-gray-400 dark:text-gray-500">Today</div>`;
+                chatBox.appendChild(dateSep);
+
+                if(snapshot.empty) {
+                     const emptyMsg = document.createElement('div');
+                     emptyMsg.className = "text-center text-gray-400 text-sm mt-10";
+                     emptyMsg.innerText = "No messages here yet.\nSay hello!";
+                     chatBox.appendChild(emptyMsg);
+                }
+
+                snapshot.forEach((doc) => {
+                    const msg = doc.data();
+                    const isMe = currentUser && msg.uid === currentUser.uid;
+                    const msgDiv = document.createElement('div');
+                    msgDiv.className = `flex w-full mb-4 ${isMe ? 'justify-end' : 'justify-start'}`;
+                    msgDiv.innerHTML = `
+                        <div class="max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}">
+                            <div class="${isMe ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 dark:text-white text-black'} px-4 py-2 rounded-2xl text-sm break-words">
+                                ${escapeHtml(msg.text)}
+                            </div>
+                            <span class="text-[10px] text-gray-400 mt-1 px-1">
+                                ${msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Sending...'}
+                            </span>
+                        </div>
+                    `;
+                    chatBox.appendChild(msgDiv);
+                });
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }, (err) => {
+                console.error("Chat Error:", err);
+            });
+        }
+
+        window.sendMessage = async function() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!currentUser || !text) return;
+            
+            input.value = '';
+            
+            const collectionId = `instagram_msg_${currentChatRoom}`;
+            
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', collectionId), {
+                    text: text, 
+                    uid: currentUser.uid, 
+                    timestamp: serverTimestamp()
+                });
+            } catch (error) { 
+                console.error("Send Error", error);
+                alert("Failed to send message: " + error.message);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        if (app) initApp();
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #fafafa;
+            overscroll-behavior-y: none;
+        }
+        
+        /* Dark Mode Base Styles */
+        .dark body { background-color: #000; color: white; }
+        .dark .bg-white { background-color: #000; }
+        .dark .text-black { color: white; }
+        .dark .border-gray-100, .dark .border-gray-200 { border-color: #262626; }
+        .dark .bg-gray-100 { background-color: #121212; }
+        .dark .text-gray-600 { color: #a8a8a8; }
+        .dark .text-gray-900 { color: #f5f5f5; }
+
+        .brand-font { font-family: 'Grand Hotel', cursive; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .story-ring {
+            background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+            padding: 2px;
+            border-radius: 50%;
+        }
+        
+        @keyframes like-bounce {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        .animate-like { animation: like-bounce 0.3s ease-in-out; }
+
+        @keyframes popup {
+            0% { transform: scale(0); opacity: 0; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+        .heart-popup { animation: popup 0.8s ease-in-out forwards; }
+
+        .app-container {
+            height: 100vh;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            background-color: white;
+            max-width: 480px;
+            margin: 0 auto;
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        
+        .dark .app-container { background-color: black; border: 1px solid #333; }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 60px;
+        }
+        
+        /* Reels Snap Scroll */
+        .snap-y-mandatory { scroll-snap-type: y mandatory; }
+        .snap-center { scroll-snap-align: center; }
+    </style>
+</head>
+<body id="body-root">
+
+    <div class="app-container transition-colors duration-300">
+        
+        <div id="debug-bar" class="w-full bg-gray-800 text-white text-xs py-1 px-2 text-center font-mono sticky top-0 z-[60]">Initializing...</div>
+
+        <!-- Top Navigation (Home) -->
+        <header id="home-header" class="sticky top-0 z-50 bg-white dark:bg-black border-b border-gray-100 dark:border-gray-800 px-4 py-2 flex justify-between items-center h-14 transition-colors">
+            <h1 class="brand-font text-3xl select-none cursor-pointer dark:text-white" onclick="switchTab('home')">Instagram</h1>
+            <div class="flex gap-4 text-black dark:text-white">
+                 <!-- Quiet Mode Indicator (Hidden by default) -->
+                <i id="quiet-mode-icon" data-lucide="moon" class="w-6 h-6 hidden text-gray-400"></i>
+                <div onclick="openSettings()" class="cursor-pointer"><i data-lucide="settings" class="w-6 h-6 hover:scale-110 transition-transform"></i></div>
+                <i data-lucide="heart" class="w-6 h-6 hover:scale-110 transition-transform cursor-pointer"></i>
+                <div class="relative" onclick="openChat()">
+                    <i data-lucide="message-circle" class="w-6 h-6 hover:scale-110 transition-transform cursor-pointer"></i>
+                    <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">1</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <div id="main-content" class="content-area no-scrollbar">
+            <!-- Stories Rail -->
+            <div class="flex gap-4 p-4 overflow-x-auto no-scrollbar border-b border-gray-100 dark:border-gray-800" id="stories-container">
+                <!-- My Story -->
+                <div class="flex flex-col items-center gap-1 min-w-[72px] cursor-pointer">
+                    <div class="relative">
+                        <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop" class="w-16 h-16 rounded-full border-2 border-white dark:border-black object-cover" id="story-my-avatar">
+                        <div class="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full w-5 h-5 flex items-center justify-center border-2 border-white dark:border-black">
+                            <i data-lucide="plus" class="w-3 h-3"></i>
+                        </div>
+                    </div>
+                    <span class="text-xs text-gray-500 truncate w-full text-center dark:text-gray-300">Your story</span>
+                </div>
+            </div>
+
+            <!-- Feed -->
+            <div id="feed-container" class="pb-4">
+                <!-- Posts injected via JS -->
+            </div>
+        </div>
+        
+        <!-- Reels View -->
+        <div id="reels-view" class="content-area no-scrollbar hidden bg-black text-white snap-y-mandatory h-full pb-14">
+            <!-- Reels Injected JS -->
+        </div>
+
+        <!-- Chat Wrapper -->
+        <div id="chat-view" class="absolute inset-0 bg-white dark:bg-black z-[60] flex flex-col transform translate-x-full transition-transform duration-300">
+            
+            <!-- VIEW 1: Inbox List -->
+            <div id="inbox-view" class="flex flex-col h-full">
+                <!-- Header -->
+                <div class="h-14 border-b border-gray-100 dark:border-gray-800 flex items-center px-4 justify-between bg-white dark:bg-black shrink-0">
+                    <div class="flex items-center gap-4 dark:text-white">
+                        <i data-lucide="arrow-left" class="w-6 h-6 cursor-pointer" onclick="closeChat()"></i>
+                        <div class="font-bold text-lg flex items-center gap-1">
+                            <span id="inbox-username">atharva_g</span> <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                    <i data-lucide="edit" class="w-6 h-6 text-black dark:text-white" onclick="promptJoinRoom()"></i>
+                </div>
+
+                <!-- Inbox List -->
+                <div class="flex-1 overflow-y-auto bg-white dark:bg-black p-4">
+                    <h3 class="font-bold mb-4 dark:text-white">Messages</h3>
+                    
+                    <!-- Global Chat Item -->
+                    <div class="flex items-center gap-3 mb-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 p-2 rounded-lg" onclick="joinRoom('global_public', 'Global Chat')">
+                        <div class="relative">
+                            <img src="https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=100&h=100&fit=crop" class="w-14 h-14 rounded-full border border-gray-200 dark:border-gray-700">
+                             <div class="absolute bottom-0 right-0 bg-green-500 border-2 border-white rounded-full w-3.5 h-3.5"></div>
+                        </div>
+                        <div class="flex-1">
+                            <div class="font-semibold dark:text-white">Global Chat 🌎</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">Public room for everyone</div>
+                        </div>
+                        <i data-lucide="camera" class="w-6 h-6 text-gray-400"></i>
+                    </div>
+
+                    <!-- Join Private Room Button -->
+                    <div class="flex items-center gap-3 mb-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 p-2 rounded-lg" onclick="promptJoinRoom()">
+                        <div class="w-14 h-14 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                            <i data-lucide="plus" class="w-6 h-6 text-blue-500 dark:text-blue-300"></i>
+                        </div>
+                        <div class="flex-1">
+                            <div class="font-semibold text-blue-500">Join Private Room</div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Enter a code to chat with friends</div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- VIEW 2: Active Conversation -->
+            <div id="conversation-view" class="flex flex-col h-full hidden">
+                <!-- Chat Header -->
+                <div class="h-14 border-b border-gray-100 dark:border-gray-800 flex items-center px-4 justify-between bg-white dark:bg-black shrink-0">
+                    <div class="flex items-center gap-4 dark:text-white">
+                        <i data-lucide="arrow-left" class="w-6 h-6 cursor-pointer" onclick="backToInbox()"></i>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-purple-600 p-[2px]">
+                                <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&fit=crop" class="w-full h-full rounded-full border border-white dark:border-black bg-white">
+                            </div>
+                            <div>
+                                <div class="font-bold text-sm" id="chat-room-title">...</div>
+                                <div class="text-xs text-gray-400">Active now</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex gap-4 text-gray-800 dark:text-white">
+                        <!-- QR Code Button -->
+                        <i data-lucide="qr-code" class="w-6 h-6 cursor-pointer" onclick="openQR()"></i>
+                        <i data-lucide="phone" class="w-6 h-6"></i>
+                        <i data-lucide="video" class="w-6 h-6"></i>
+                    </div>
+                </div>
+                
+                <!-- Chat Messages -->
+                <div id="chat-messages" class="flex-1 overflow-y-auto p-4 bg-white dark:bg-black">
+                    <!-- Messages injected -->
+                </div>
+
+                <!-- Chat Input -->
+                <div class="p-3 bg-white dark:bg-black border-t border-gray-100 dark:border-gray-800 shrink-0">
+                    <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-900 rounded-full px-4 py-2">
+                        <div class="bg-blue-500 rounded-full p-1 cursor-pointer">
+                            <i data-lucide="camera" class="w-4 h-4 text-white"></i>
+                        </div>
+                        <input type="text" id="chat-input" class="bg-transparent flex-1 outline-none text-sm dark:text-white" placeholder="Message..." onkeypress="if(event.key === 'Enter') window.sendMessage()">
+                        <button onclick="window.sendMessage()" class="font-semibold text-blue-500 text-sm">Send</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Profile View -->
+        <div id="profile-view" class="content-area no-scrollbar hidden bg-white dark:bg-black dark:text-white">
+            <div class="px-4 pt-4 pb-8">
+                <!-- Profile Header -->
+                <div class="flex justify-between items-center mb-6">
+                    <h2 id="profile-username-header" class="font-bold text-xl flex items-center gap-1">... <i data-lucide="chevron-down" class="w-4 h-4"></i></h2>
+                    <div class="flex gap-4"><i data-lucide="plus-square" class="w-6 h-6"></i><i data-lucide="menu" class="w-6 h-6"></i></div>
+                </div>
+                <!-- Profile Info -->
+                <div class="flex items-center justify-between mb-6">
+                    <div class="story-ring p-[2px]">
+                        <img id="profile-avatar-display" src="" class="w-20 h-20 rounded-full border-2 border-white dark:border-black object-cover">
+                    </div>
+                    <div class="flex gap-6 text-center mr-4">
+                        <div><div class="font-bold text-lg">125</div><div class="text-xs text-gray-900 dark:text-gray-400">Posts</div></div>
+                        <div><div class="font-bold text-lg">4.2k</div><div class="text-xs text-gray-900 dark:text-gray-400">Followers</div></div>
+                        <div><div class="font-bold text-lg">340</div><div class="text-xs text-gray-900 dark:text-gray-400">Following</div></div>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <div id="profile-name-display" class="font-bold flex items-center gap-1">...</div>
+                    <div id="profile-bio-display" class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">...</div>
+                    <div class="mt-2 bg-gray-100 dark:bg-gray-800 rounded p-2 flex items-center gap-2 w-fit">
+                         <i data-lucide="music" class="w-3 h-3 text-gray-500"></i>
+                         <span class="text-xs text-gray-500">Espresso - Sabrina Carpenter</span>
+                    </div>
+                </div>
+                <!-- Buttons -->
+                <div class="flex gap-2 mb-6">
+                    <button onclick="openEditProfile()" class="flex-1 bg-gray-100 dark:bg-gray-800 py-1.5 rounded-lg text-sm font-semibold">Edit profile</button>
+                    <button onclick="shareProfile()" class="flex-1 bg-gray-100 dark:bg-gray-800 py-1.5 rounded-lg text-sm font-semibold">Share profile</button>
+                    <button class="bg-gray-100 dark:bg-gray-800 p-1.5 rounded-lg"><i data-lucide="user-plus" class="w-5 h-5"></i></button>
+                </div>
+                <!-- Tabs -->
+                <div class="flex border-t border-gray-200 dark:border-gray-800">
+                    <div class="flex-1 flex justify-center py-3 border-b border-black dark:border-white -mb-[1px]"><i data-lucide="grid-3x3" class="w-6 h-6"></i></div>
+                    <div class="flex-1 flex justify-center py-3 text-gray-400"><i data-lucide="clapperboard" class="w-6 h-6"></i></div>
+                    <div class="flex-1 flex justify-center py-3 text-gray-400"><i data-lucide="user-square" class="w-6 h-6"></i></div>
+                </div>
+                <!-- Grid -->
+                <div class="grid grid-cols-3 gap-0.5" id="profile-grid"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <nav class="sticky bottom-0 bg-white dark:bg-black border-t border-gray-100 dark:border-gray-800 px-6 py-3 flex justify-between items-center z-50">
+            <i data-lucide="home" class="w-6 h-6 cursor-pointer nav-icon active text-black dark:text-white" onclick="switchTab('home')" stroke-width="2.5"></i>
+            <i data-lucide="search" class="w-6 h-6 cursor-pointer nav-icon text-gray-400" onclick="searchAlert()"></i>
+            <i data-lucide="plus-square" class="w-6 h-6 cursor-pointer nav-icon text-gray-400" onclick="createPost()"></i>
+            <i data-lucide="clapperboard" class="w-6 h-6 cursor-pointer nav-icon text-gray-400" onclick="switchTab('reels')"></i>
+            <div onclick="switchTab('profile')" class="cursor-pointer nav-icon rounded-full border border-gray-200 dark:border-gray-700 p-[1px]">
+                <img id="nav-avatar-display" src="" class="w-6 h-6 rounded-full object-cover">
+            </div>
+        </nav>
+
+    </div>
+    
+    <!-- QR Code Modal -->
+    <div id="qr-modal" class="fixed inset-0 bg-black/80 z-[90] hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl w-full max-w-sm overflow-hidden flex flex-col items-center p-6 text-center">
+            <div class="w-full flex justify-end mb-2">
+                <i data-lucide="x" class="w-6 h-6 cursor-pointer text-gray-500" onclick="closeQR()"></i>
+            </div>
+            <div class="w-full bg-gradient-to-tr from-purple-500 to-orange-500 p-1 rounded-2xl shadow-xl">
+                 <div class="bg-white rounded-xl p-6 flex flex-col items-center">
+                    <h3 class="font-bold text-xl mb-1" id="qr-room-name">...</h3>
+                    <p class="text-gray-400 text-xs mb-4">Scan to join chat room</p>
+                    <img id="qr-image" src="" class="w-48 h-48 mb-4">
+                 </div>
+            </div>
+            <p class="text-gray-600 text-sm mt-6">Your friend needs to scan this code on their phone to join this conversation instantly.</p>
+        </div>
+    </div>
+
+    <!-- Create Post Modal -->
+    <div id="upload-modal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-900 rounded-xl w-full max-w-sm overflow-hidden text-black dark:text-white">
+            <div class="border-b border-gray-100 dark:border-gray-700 p-3 flex justify-between items-center">
+                <button class="text-sm font-medium text-red-500" onclick="closeModal()">Cancel</button>
+                <span class="font-semibold">New Post</span>
+                <button class="text-sm font-bold text-blue-500" onclick="submitPost()">Share</button>
+            </div>
+            <div class="p-4 flex gap-4">
+                <img id="modal-avatar-display" src="" class="w-8 h-8 rounded-full">
+                <textarea id="post-caption" class="w-full bg-transparent text-sm outline-none resize-none h-20 placeholder-gray-400" placeholder="Write a caption..."></textarea>
+            </div>
+            <!-- Technical Specs Controls -->
+            <div class="px-4 pb-4 space-y-3">
+                 <div>
+                    <label class="text-xs text-gray-500 uppercase font-bold">Aspect Ratio</label>
+                    <div class="flex gap-2 mt-1">
+                        <button onclick="setRatio('square', this)" class="ratio-btn bg-gray-200 dark:bg-gray-800 text-xs px-2 py-1 rounded text-blue-500 font-bold border border-blue-500">1:1 (Square)</button>
+                        <button onclick="setRatio('portrait', this)" class="ratio-btn bg-gray-200 dark:bg-gray-800 text-xs px-2 py-1 rounded">4:5 (Portrait)</button>
+                        <button onclick="setRatio('landscape', this)" class="ratio-btn bg-gray-200 dark:bg-gray-800 text-xs px-2 py-1 rounded">1.91:1</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 uppercase font-bold">Accessibility</label>
+                    <input id="post-alt-text" type="text" placeholder="Write Alt Text..." class="w-full bg-gray-100 dark:bg-gray-800 text-xs p-2 rounded mt-1 outline-none">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Profile Modal -->
+    <div id="edit-profile-modal" class="fixed inset-0 bg-black/60 z-[70] hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-900 rounded-xl w-full max-w-sm overflow-hidden flex flex-col max-h-[90vh] text-black dark:text-white">
+            <div class="border-b border-gray-100 dark:border-gray-700 p-3 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-900">
+                <button class="text-sm font-medium text-gray-500" onclick="closeEditProfile()">Cancel</button>
+                <span class="font-bold text-base">Edit Profile</span>
+                <button class="text-sm font-bold text-blue-500" onclick="saveEditProfile()">Done</button>
+            </div>
+            <div class="p-6 overflow-y-auto">
+                <div class="flex flex-col items-center mb-6">
+                    <img id="edit-avatar-preview" src="" class="w-20 h-20 rounded-full mb-3 object-cover border border-gray-200 dark:border-gray-700">
+                    <button class="text-blue-500 text-sm font-semibold" onclick="document.getElementById('avatar-upload').click()">Change profile photo</button>
+                    <input type="file" id="avatar-upload" class="hidden" accept="image/*" onchange="handleAvatarUpload(event)">
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                         <label class="text-xs text-gray-500">Meta Verified</label>
+                         <input type="checkbox" id="edit-verified-input" class="accent-blue-500">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 block mb-1">Name</label>
+                        <input type="text" id="edit-name-input" class="w-full bg-transparent border-b border-gray-300 dark:border-gray-700 py-1 text-sm outline-none" placeholder="Name">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 block mb-1">Username</label>
+                        <input type="text" id="edit-username-input" class="w-full bg-transparent border-b border-gray-300 dark:border-gray-700 py-1 text-sm outline-none" placeholder="Username">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 block mb-1">Bio</label>
+                        <textarea id="edit-bio-input" class="w-full bg-transparent border-b border-gray-300 dark:border-gray-700 py-1 text-sm outline-none resize-none" rows="2" placeholder="Bio"></textarea>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 block mb-1">Avatar URL</label>
+                        <input type="text" id="edit-avatar-input" class="w-full bg-transparent border-b border-gray-300 dark:border-gray-700 py-1 text-sm outline-none" oninput="document.getElementById('edit-avatar-preview').src = this.value">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 z-[80] hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-900 rounded-xl w-full max-w-sm overflow-hidden text-black dark:text-white">
+            <div class="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center">
+                <h3 class="font-bold">Settings & activity</h3>
+                <i data-lucide="x" class="w-6 h-6 cursor-pointer" onclick="closeSettings()"></i>
+            </div>
+            <div class="p-2">
+                 <div class="p-3 hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center justify-between cursor-pointer" onclick="toggleDarkMode()">
+                    <div class="flex items-center gap-3"><i data-lucide="moon" class="w-5 h-5"></i> <span>Dark Mode</span></div>
+                    <div id="dark-mode-status" class="text-xs text-gray-400">Off</div>
+                </div>
+                <div class="p-3 hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center justify-between cursor-pointer" onclick="toggleQuietMode()">
+                    <div class="flex items-center gap-3"><i data-lucide="bell-off" class="w-5 h-5"></i> <span>Quiet Mode</span></div>
+                    <div id="quiet-mode-status" class="text-xs text-gray-400">Off</div>
+                </div>
+                <div class="p-3 hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center justify-between cursor-pointer">
+                    <div class="flex items-center gap-3"><i data-lucide="shield-alert" class="w-5 h-5"></i> <span>Account Status</span></div>
+                    <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                </div>
+                 <div class="p-3 hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center justify-between cursor-pointer">
+                    <div class="flex items-center gap-3"><i data-lucide="archive" class="w-5 h-5"></i> <span>Archive</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Data & State ---
+        const defaultProfile = {
+            name: 'Atharva Gawande',
+            username: 'atharva_g',
+            bio: 'Developer & Designer 👨‍💻',
+            avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop',
+            isVerified: true
+        };
+        let userProfile = JSON.parse(localStorage.getItem('instagram_profile')) || defaultProfile;
+        
+        let settings = {
+            darkMode: false,
+            quietMode: false
+        };
+        
+        // Post Creation State
+        let currentRatio = 'square';
+
+        const users = [
+            { id: 1, username: 'jessica_travels', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&fit=crop', hasStory: true },
+            { id: 2, username: 'coffee_lover', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&fit=crop', hasStory: true },
+            { id: 3, username: 'tech_guru', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=150&fit=crop', hasStory: false },
+            { id: 4, username: 'art_daily', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&fit=crop', hasStory: true },
+            { id: 5, username: 'fitness_jim', avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&fit=crop', hasStory: true },
+        ];
+
+        let posts = [
+            {
+                id: 101,
+                user: users[0],
+                image: 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=800&fit=crop',
+                likes: 1243,
+                caption: 'Sunset in Switzerland 🏔️ #travel #nature',
+                time: '2 hours ago',
+                isLiked: false,
+                isSaved: false,
+                ratio: 'square',
+                isPinned: true
+            },
+            {
+                id: 102,
+                user: users[1],
+                image: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&fit=crop',
+                likes: 856,
+                caption: 'Morning brew is essential ☕',
+                time: '5 hours ago',
+                isLiked: true,
+                isSaved: true,
+                ratio: 'portrait',
+                isPinned: false
+            }
+        ];
+        
+        const reelsData = [
+            { id: 201, video: 'https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=600&h=1066&fit=crop', user: users[4], likes: '10.5K', desc: 'Leg day motivation! 🏋️‍♂️ #gym #fitness' },
+            { id: 202, video: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&h=1066&fit=crop', user: users[3], likes: '45.2K', desc: 'Digital Art Process 🎨 #art #procreate' },
+            { id: 203, video: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=600&h=1066&fit=crop', user: users[0], likes: '8.1K', desc: 'Hiking views 🌲 #nature' }
+        ];
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            if(localStorage.getItem('ig_dark_mode') === 'true') toggleDarkMode(true);
+            
+            renderStories();
+            renderFeed();
+            renderProfileGrid();
+            renderReels();
+            updateProfileDOM();
+            lucide.createIcons();
+        });
+
+        // --- Core Functions ---
+
+        function updateProfileDOM() {
+            const verifiedBadge = userProfile.isVerified ? `<i data-lucide="badge-check" class="w-5 h-5 text-blue-500 fill-blue-500 text-white ml-1"></i>` : '';
+            
+            document.getElementById('profile-username-header').innerHTML = `${userProfile.username} ${verifiedBadge} <i data-lucide="chevron-down" class="w-4 h-4 ml-1 text-black dark:text-white"></i>`;
+            document.getElementById('profile-avatar-display').src = userProfile.avatar;
+            document.getElementById('profile-name-display').innerHTML = `${userProfile.name} ${verifiedBadge}`;
+            document.getElementById('profile-bio-display').innerText = userProfile.bio;
+            document.getElementById('story-my-avatar').src = userProfile.avatar;
+            document.getElementById('nav-avatar-display').src = userProfile.avatar;
+            document.getElementById('modal-avatar-display').src = userProfile.avatar;
+            document.getElementById('inbox-username').innerText = userProfile.username;
+
+            lucide.createIcons();
+        }
+        
+        function setRatio(ratio, btn) {
+            currentRatio = ratio;
+            document.querySelectorAll('.ratio-btn').forEach(b => {
+                b.classList.remove('text-blue-500', 'border', 'border-blue-500', 'font-bold');
+                b.classList.add('text-black', 'dark:text-white');
+            });
+            btn.classList.add('text-blue-500', 'border', 'border-blue-500', 'font-bold');
+            btn.classList.remove('text-black', 'dark:text-white');
+        }
+
+        // --- Features: Dark Mode & Settings ---
+        function openSettings() {
+            document.getElementById('settings-modal').classList.remove('hidden');
+        }
+        function closeSettings() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+        function toggleDarkMode(forceState = null) {
+            const body = document.documentElement;
+            const status = document.getElementById('dark-mode-status');
+            
+            if (forceState !== null) {
+                settings.darkMode = forceState;
+            } else {
+                settings.darkMode = !settings.darkMode;
+            }
+            
+            if (settings.darkMode) {
+                body.classList.add('dark');
+                status.innerText = 'On';
+                localStorage.setItem('ig_dark_mode', 'true');
+            } else {
+                body.classList.remove('dark');
+                status.innerText = 'Off';
+                localStorage.setItem('ig_dark_mode', 'false');
+            }
+        }
+        
+        function toggleQuietMode() {
+            settings.quietMode = !settings.quietMode;
+            document.getElementById('quiet-mode-status').innerText = settings.quietMode ? 'On' : 'Off';
+            const icon = document.getElementById('quiet-mode-icon');
+            if(settings.quietMode) icon.classList.remove('hidden');
+            else icon.classList.add('hidden');
+        }
+
+        // --- Editing Profile ---
+        function openEditProfile() {
+            document.getElementById('edit-name-input').value = userProfile.name;
+            document.getElementById('edit-username-input').value = userProfile.username;
+            document.getElementById('edit-bio-input').value = userProfile.bio;
+            document.getElementById('edit-avatar-input').value = userProfile.avatar;
+            document.getElementById('edit-avatar-preview').src = userProfile.avatar;
+            document.getElementById('edit-verified-input').checked = userProfile.isVerified || false;
+            document.getElementById('edit-profile-modal').classList.remove('hidden');
+        }
+
+        function saveEditProfile() {
+            const name = document.getElementById('edit-name-input').value.trim();
+            const username = document.getElementById('edit-username-input').value.trim();
+            const bio = document.getElementById('edit-bio-input').value.trim();
+            const avatar = document.getElementById('edit-avatar-input').value.trim();
+            const isVerified = document.getElementById('edit-verified-input').checked;
+
+            if (!name || !username) return alert("Name/Username required");
+
+            userProfile = { ...userProfile, name, username, bio, avatar: avatar || defaultProfile.avatar, isVerified };
+            try { localStorage.setItem('instagram_profile', JSON.stringify(userProfile)); } catch(e){}
+
+            updateProfileDOM();
+            closeEditProfile();
+        }
+        
+        function handleAvatarUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('edit-avatar-preview').src = e.target.result;
+                    document.getElementById('edit-avatar-input').value = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+        function closeEditProfile() { document.getElementById('edit-profile-modal').classList.add('hidden'); }
+
+
+        // --- Renderers ---
+        function renderStories() {
+            const container = document.getElementById('stories-container');
+            // Keep My Story
+            const myStory = container.firstElementChild;
+            container.innerHTML = '';
+            container.appendChild(myStory);
+            
+            users.forEach(user => {
+                if(user.hasStory) {
+                    const el = document.createElement('div');
+                    el.className = 'flex flex-col items-center gap-1 min-w-[72px] cursor-pointer group';
+                    el.innerHTML = `
+                        <div class="story-ring transition-transform group-active:scale-95">
+                            <div class="bg-white dark:bg-black p-[2px] rounded-full">
+                                <img src="${user.avatar}" class="w-14 h-14 rounded-full object-cover">
+                            </div>
+                        </div>
+                        <span class="text-xs text-gray-900 dark:text-gray-300 truncate w-full text-center">${user.username}</span>
+                    `;
+                    container.appendChild(el);
+                }
+            });
+        }
+
+        function renderFeed() {
+            const container = document.getElementById('feed-container');
+            container.innerHTML = ''; 
+            
+            // Sort by pinned
+            const sortedPosts = [...posts].sort((a,b) => (b.isPinned === a.isPinned) ? 0 : b.isPinned ? 1 : -1);
+
+            sortedPosts.forEach(post => {
+                // Determine Aspect Ratio Style
+                let imgClass = "w-full object-cover";
+                let containerClass = "relative bg-gray-100 dark:bg-gray-900 cursor-pointer overflow-hidden";
+                
+                if(post.ratio === 'square') containerClass += " aspect-square"; // 1:1
+                else if(post.ratio === 'portrait') containerClass += " aspect-[4/5]"; // 4:5
+                else if(post.ratio === 'landscape') containerClass += " aspect-[1.91/1]"; // 1.91:1
+                else containerClass += " aspect-square"; // fallback
+
+                const article = document.createElement('article');
+                article.className = 'bg-white dark:bg-black mb-2';
+                article.innerHTML = `
+                    <div class="flex justify-between items-center p-3">
+                        <div class="flex items-center gap-3">
+                            <div class="story-ring p-[1.5px] ${post.user.hasStory ? '' : 'bg-transparent'}">
+                                <img src="${post.user.avatar}" class="w-8 h-8 rounded-full border border-gray-100 dark:border-gray-800 object-cover">
+                            </div>
+                            <span class="text-sm font-semibold hover:opacity-70 cursor-pointer dark:text-white">${post.user.username}</span>
+                            ${post.isPinned ? '<i data-lucide="pin" class="w-3 h-3 text-gray-400 rotate-45"></i>' : ''}
+                        </div>
+                        <i data-lucide="more-horizontal" class="w-5 h-5 text-gray-600 dark:text-white cursor-pointer" onclick="togglePin(${post.id})"></i>
+                    </div>
+
+                    <div class="${containerClass}" ondblclick="handleLike(${post.id}, true)">
+                         <img src="${post.image}" class="${imgClass} h-full w-full" alt="${post.altText || 'Post image'}" loading="lazy">
+                         <div id="heart-overlay-${post.id}" class="absolute inset-0 flex items-center justify-center opacity-0 pointer-events-none">
+                            <i data-lucide="heart" class="w-24 h-24 text-white fill-white drop-shadow-lg"></i>
+                         </div>
+                         ${post.altText ? '<div class="absolute bottom-2 left-2 bg-black/50 text-white text-[10px] px-1 rounded">ALT</div>' : ''}
+                    </div>
+
+                    <div class="p-3">
+                        <div class="flex justify-between items-center mb-3">
+                            <div class="flex gap-4">
+                                <i data-lucide="heart" id="like-btn-${post.id}" onclick="handleLike(${post.id})" class="w-7 h-7 cursor-pointer transition-colors ${post.isLiked ? 'fill-red-500 text-red-500' : 'text-black dark:text-white'}"></i>
+                                <i data-lucide="message-circle" class="w-7 h-7 cursor-pointer text-black dark:text-white -rotate-90"></i>
+                                <i data-lucide="send" onclick="sharePost(${post.id})" class="w-7 h-7 cursor-pointer text-black dark:text-white -rotate-45"></i>
+                            </div>
+                            <i data-lucide="bookmark" onclick="toggleSave(this)" class="w-7 h-7 cursor-pointer ${post.isSaved ? 'fill-black dark:fill-white text-black dark:text-white' : 'text-black dark:text-white'}"></i>
+                        </div>
+                        <div class="font-semibold text-sm mb-1 dark:text-white" id="likes-count-${post.id}">${post.likes.toLocaleString()} likes</div>
+                        <div class="text-sm mb-1 dark:text-white">
+                            <span class="font-semibold mr-1">${post.user.username}</span> ${post.caption}
+                        </div>
+                        <div class="text-gray-500 text-sm cursor-pointer mb-1">View all comments</div>
+                        <div class="text-gray-400 text-[10px] uppercase tracking-wide">${post.time}</div>
+                    </div>
+                `;
+                container.appendChild(article);
+            });
+            lucide.createIcons();
+        }
+        
+        function renderReels() {
+             const container = document.getElementById('reels-view');
+             container.innerHTML = '';
+             reelsData.forEach(reel => {
+                 const el = document.createElement('div');
+                 el.className = "w-full h-full relative snap-center shrink-0 bg-gray-900";
+                 el.innerHTML = `
+                    <img src="${reel.video}" class="w-full h-full object-cover opacity-80">
+                    <div class="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/80 to-transparent p-4 pb-20">
+                        <div class="flex items-center gap-2 mb-2">
+                             <img src="${reel.user.avatar}" class="w-8 h-8 rounded-full border border-white">
+                             <span class="font-semibold text-sm">${reel.user.username}</span>
+                             <button class="border border-white/50 text-xs px-2 py-1 rounded">Follow</button>
+                        </div>
+                        <p class="text-sm mb-2">${reel.desc}</p>
+                        <div class="flex items-center gap-2 text-xs opacity-80">
+                            <i data-lucide="music" class="w-3 h-3"></i> <span>Original Audio</span>
+                        </div>
+                    </div>
+                    <!-- Right Actions -->
+                    <div class="absolute bottom-20 right-2 flex flex-col items-center gap-6">
+                        <div class="flex flex-col items-center gap-1"><i data-lucide="heart" class="w-7 h-7"></i> <span class="text-xs">${reel.likes}</span></div>
+                        <div class="flex flex-col items-center gap-1"><i data-lucide="message-circle" class="w-7 h-7"></i> <span class="text-xs">1.2K</span></div>
+                        <i data-lucide="send" class="w-7 h-7 -rotate-45"></i>
+                        <i data-lucide="more-horizontal" class="w-7 h-7"></i>
+                        <img src="${reel.user.avatar}" class="w-8 h-8 rounded border-2 border-white mt-2">
+                    </div>
+                 `;
+                 container.appendChild(el);
+             });
+        }
+
+        function renderProfileGrid() {
+            const grid = document.getElementById('profile-grid');
+            grid.innerHTML = '';
+            
+            // Show posts in grid (pinned first logic optional, usually chronological)
+            const pinned = posts.filter(p => p.isPinned);
+            const others = posts.filter(p => !p.isPinned);
+            const displayPosts = [...pinned, ...others];
+            
+            displayPosts.forEach(post => {
+                const div = document.createElement('div');
+                div.className = 'aspect-square bg-gray-100 dark:bg-gray-800 relative group cursor-pointer overflow-hidden';
+                div.innerHTML = `
+                    <img src="${post.image}" class="w-full h-full object-cover">
+                    ${post.isPinned ? '<div class="absolute top-1 right-1 bg-white/90 dark:bg-black/50 p-1 rounded-full"><i data-lucide="pin" class="w-3 h-3 text-black dark:text-white"></i></div>' : ''}
+                `;
+                grid.appendChild(div);
+            });
+            // Fill with mock if empty
+             const images = [
+                'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=300&fit=crop',
+                'https://images.unsplash.com/photo-1605379399642-870262d3d051?w=300&fit=crop',
+                'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=300&fit=crop',
+                'https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=300&fit=crop'
+            ];
+            images.forEach(img => {
+                const div = document.createElement('div');
+                div.className = 'aspect-square bg-gray-100 dark:bg-gray-800 relative cursor-pointer';
+                div.innerHTML = `<img src="${img}" class="w-full h-full object-cover">`;
+                grid.appendChild(div);
+            });
+        }
+
+        // --- Interaction Logic ---
+        function switchTab(tabName) {
+            const mainContent = document.getElementById('main-content');
+            const profileView = document.getElementById('profile-view');
+            const reelsView = document.getElementById('reels-view');
+            const icons = document.querySelectorAll('.nav-icon');
+            
+            icons.forEach(icon => {
+                icon.classList.remove('text-black', 'dark:text-white', 'active');
+                icon.classList.add('text-gray-400');
+            });
+
+            mainContent.classList.add('hidden');
+            profileView.classList.add('hidden');
+            reelsView.classList.add('hidden');
+
+            if (tabName === 'home') {
+                mainContent.classList.remove('hidden');
+                icons[0].classList.add('text-black', 'dark:text-white');
+            } else if (tabName === 'profile') {
+                profileView.classList.remove('hidden');
+                icons[4].classList.add('border-black', 'dark:border-white');
+            } else if (tabName === 'reels') {
+                reelsView.classList.remove('hidden');
+                icons[3].classList.add('text-black', 'dark:text-white');
+            }
+            window.scrollTo(0,0);
+        }
+        
+        function handleLike(postId, isDoubleTap = false) {
+            const postIndex = posts.findIndex(p => p.id === postId);
+            if (postIndex === -1) return;
+            const post = posts[postIndex];
+            
+            if (isDoubleTap && post.isLiked) {
+                triggerHeartAnimation(postId);
+                return;
+            }
+
+            post.isLiked = !post.isLiked;
+            post.likes += post.isLiked ? 1 : -1;
+            
+            // Re-render specific post parts for efficiency would be better, but re-rendering feed is simpler for this structure
+            renderFeed();
+            
+            if (post.isLiked && isDoubleTap) triggerHeartAnimation(postId);
+        }
+        
+        function triggerHeartAnimation(postId) {
+            const overlay = document.getElementById(`heart-overlay-${postId}`);
+            overlay.classList.remove('heart-popup');
+            void overlay.offsetWidth; 
+            overlay.classList.add('heart-popup');
+            lucide.createIcons({ root: overlay });
+        }
+        
+        function togglePin(postId) {
+            const post = posts.find(p => p.id === postId);
+            if(post) {
+                post.isPinned = !post.isPinned;
+                renderFeed();
+                renderProfileGrid();
+            }
+        }
+        
+        function toggleSave(btn) {
+            if (btn.classList.contains('fill-black') || btn.classList.contains('dark:fill-white')) {
+                btn.classList.remove('fill-black', 'dark:fill-white', 'text-black', 'dark:text-white');
+            } else {
+                btn.classList.add('fill-black', 'dark:fill-white', 'text-black', 'dark:text-white');
+            }
+        }
+
+        // --- Modals & Share ---
+        function createPost() { document.getElementById('upload-modal').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('upload-modal').classList.add('hidden'); document.getElementById('post-caption').value = ''; }
+        
+        function submitPost() {
+            const caption = document.getElementById('post-caption').value;
+            const altText = document.getElementById('post-alt-text').value;
+            
+            const newPost = {
+                id: Date.now(),
+                user: { username: userProfile.username, avatar: userProfile.avatar, hasStory: true },
+                image: 'https://images.unsplash.com/photo-1516259762381-22954d7d3ad2?w=800&fit=crop',
+                likes: 0,
+                caption: caption || '',
+                time: 'Just now',
+                isLiked: false,
+                isSaved: false,
+                ratio: currentRatio,
+                isPinned: false,
+                altText: altText
+            };
+            posts.unshift(newPost);
+            renderFeed();
+            renderProfileGrid();
+            closeModal();
+            switchTab('home');
+        }
+        
+        function shareProfile() {
+            const shareData = {
+                title: `${userProfile.name} (@${userProfile.username})`,
+                text: `Check out ${userProfile.name}'s profile!`,
+                url: window.location.href
+            };
+            if (navigator.share) {
+                navigator.share(shareData).catch(console.log);
+            } else {
+                 alert("Link copied to clipboard!");
+            }
+        }
+        
+        function sharePost(id) {
+            alert("Sent to DMs!");
+        }
+        
+        function openChat() { document.getElementById('chat-view').classList.remove('translate-x-full'); }
+        function closeChat() { document.getElementById('chat-view').classList.add('translate-x-full'); }
+        function searchAlert() { alert("Search: 'Tokyo', 'Design', 'Music'"); }
+
+    </script>
+</body>
+</html>
