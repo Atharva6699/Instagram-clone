@@ -72,6 +72,7 @@
         let currentChatRoom = 'global_public'; // Default room
         let isVanishMode = false; // State for Vanish Mode
         let callTimeout = null; // Timeout handler for simulated calls
+        let currentCallType = 'voice'; // Store if it's voice or video
 
         async function initApp() {
             if (initError) return;
@@ -125,52 +126,106 @@
         
         // --- Call Simulation Logic ---
         
-        window.startCall = function(type) {
+        function runConnectedCall(type) {
+            const callModal = document.getElementById('call-modal');
+            const callStatus = document.getElementById('call-status');
+            const videoPreview = document.getElementById('video-preview');
+            const endCallBtn = document.getElementById('end-call-button');
+            const incomingUI = document.getElementById('call-incoming-ui');
+            const connectedUI = document.getElementById('call-connected-ui');
+
+            incomingUI.classList.add('hidden');
+            connectedUI.classList.remove('hidden');
+
+            callModal.classList.remove('hidden');
+            endCallBtn.classList.add('bg-red-500');
+            
+            if (type === 'video') {
+                videoPreview.classList.remove('hidden');
+            } else {
+                videoPreview.classList.add('hidden');
+            }
+            
+            callStatus.innerText = 'Connected: 00:00';
+            callStatus.classList.remove('text-gray-400', 'text-yellow-400');
+            callStatus.classList.add('text-green-500', 'font-bold');
+            
+            // Start call timer (simulated)
+            let seconds = 0;
+            callTimeout = setInterval(() => {
+                seconds++;
+                const min = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const sec = (seconds % 60).toString().padStart(2, '0');
+                callStatus.innerText = `Connected: ${min}:${sec}`;
+            }, 1000);
+            
+            // Auto end call after 15 seconds 
+            setTimeout(() => {
+                if (callModal.classList.contains('hidden')) return;
+                window.endCall('missed');
+            }, 15000); 
+        }
+
+        window.receiveCall = function(type) {
+            currentCallType = type;
             const roomTitle = document.getElementById('chat-room-title').innerText;
             const callModal = document.getElementById('call-modal');
             const callTitle = document.getElementById('call-title');
             const callStatus = document.getElementById('call-status');
-            const videoPreview = document.getElementById('video-preview');
-            const endCallBtn = document.getElementById('end-call-button');
+            const incomingUI = document.getElementById('call-incoming-ui');
+            const connectedUI = document.getElementById('call-connected-ui');
 
+            // Set UI for incoming state
+            connectedUI.classList.add('hidden');
+            incomingUI.classList.remove('hidden');
             callModal.classList.remove('hidden');
-            endCallBtn.classList.add('bg-red-500');
-
+            
             callTitle.innerText = roomTitle;
-            
-            if (type === 'video') {
-                videoPreview.classList.remove('hidden');
-                callStatus.innerText = 'Video calling...';
-            } else {
-                videoPreview.classList.add('hidden');
-                callStatus.innerText = 'Calling...';
-            }
-            
-            // Step 1: Ringing/Calling
-            callStatus.classList.remove('text-green-500', 'text-red-500');
+            callStatus.innerText = `${type === 'video' ? 'Video' : 'Voice'} Calling...`;
+            callStatus.classList.remove('text-green-500', 'text-red-500', 'text-yellow-400');
             callStatus.classList.add('text-gray-400');
-
-            // Step 2: Connection simulation (3 seconds later)
+            
+            // Simulate ringing/missed call timer
             callTimeout = setTimeout(() => {
-                callStatus.innerText = 'Connected: 00:00';
-                callStatus.classList.remove('text-gray-400');
-                callStatus.classList.add('text-green-500', 'font-bold');
-                
-                // Start call timer (simulated)
-                let seconds = 0;
-                callTimeout = setInterval(() => {
-                    seconds++;
-                    const min = Math.floor(seconds / 60).toString().padStart(2, '0');
-                    const sec = (seconds % 60).toString().padStart(2, '0');
-                    callStatus.innerText = `Connected: ${min}:${sec}`;
-                }, 1000);
-                
-                // Auto end call after 15 seconds (total 18 seconds)
-                setTimeout(() => {
-                    window.endCall('missed'); // Use 'missed' to denote auto-end/failure
-                }, 15000); 
+                 if (!callModal.classList.contains('hidden') && incomingUI.classList.contains('hidden')) {
+                    // Only timeout if call was not picked up/declined
+                    window.endCall('missed');
+                 }
+            }, 10000); // 10 seconds of simulated ringing
+        }
+        
+        window.acceptCall = function() {
+            window.endCall('accepted'); // Clear initial timer
+            runConnectedCall(currentCallType);
+        }
 
-            }, 3000);
+        window.declineCall = function() {
+             window.endCall('declined');
+        }
+
+        window.startCall = function(type) {
+            currentCallType = type;
+            // Attempt to get media permissions to simulate the native prompt
+            const mediaConstraints = type === 'video' ? { video: true, audio: true } : { audio: true };
+            
+            navigator.mediaDevices.getUserMedia(mediaConstraints)
+                .then(stream => {
+                    stream.getTracks().forEach(track => track.stop()); 
+                    
+                    // After permission granted (or denied and fallback used), simulate incoming call
+                    alert(`Permission granted. Simulating an incoming ${type} call from your friend to test the interface.`);
+                    window.receiveCall(type);
+                })
+                .catch(err => {
+                    console.error("WebRTC Error:", err);
+                    
+                    if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+                        alert(`Call simulation fallback: Permission to access mic/camera was denied by the browser or system. Starting incoming call simulation.`);
+                         window.receiveCall(type);
+                    } else {
+                        alert(`Device Error: ${err.message}. Cannot start call.`);
+                    }
+                });
         }
 
         window.endCall = function(reason = 'ended') {
@@ -179,25 +234,33 @@
 
             const callModal = document.getElementById('call-modal');
             const callStatus = document.getElementById('call-status');
-            const endCallBtn = document.getElementById('end-call-button');
+            
+            let statusText = 'Call Ended';
+            let statusColor = 'text-red-500';
 
-            endCallBtn.classList.remove('bg-red-500');
-            endCallBtn.classList.add('bg-gray-400');
-
-            if (reason === 'ended') {
-                callStatus.innerText = 'Call Ended';
-                callStatus.classList.remove('text-green-500');
-                callStatus.classList.add('text-red-500');
+            if (reason === 'failed') {
+                statusText = 'Connection Failed (WebRTC requires a Signaling Server)';
+                statusColor = 'text-yellow-400 font-bold text-sm';
+            } else if (reason === 'accepted') {
+                // Do nothing, the next function (runConnectedCall) handles the connection UI
+                return;
+            } else if (reason === 'declined') {
+                 statusText = 'Call Declined';
+            } else if (reason === 'ended') {
+                statusText = 'Call Ended';
             } else if (reason === 'missed') {
-                callStatus.innerText = 'Call Ended (No Answer)';
-                callStatus.classList.remove('text-green-500');
-                callStatus.classList.add('text-red-500');
+                statusText = 'Call Ended (No Answer)';
             }
+            
+            callStatus.innerText = statusText;
+            callStatus.classList.remove('text-green-500', 'text-gray-400', 'text-yellow-400');
+            callStatus.classList.add(statusColor);
+
 
             // Hide modal shortly after status update
             setTimeout(() => {
                 callModal.classList.add('hidden');
-            }, 1500);
+            }, 5000); 
         }
 
         // --- Chat UI/Firestore Logic (unchanged) ---
@@ -532,7 +595,7 @@
                                     <div class="absolute -top-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-2 py-1 text-[10px] text-center w-16 shadow-sm truncate">
                                         Gym 💪
                                     </div>
-                                    <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&fit=crop" class="w-14 h-14 rounded-full border border-gray-200 dark:border-gray-700 mt-2">
+                                    <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop" class="w-14 h-14 rounded-full border border-gray-200 dark:border-gray-700 mt-2">
                                 </div>
                                 <span class="text-xs text-gray-500 mt-1 truncate w-full text-center">jessica_t...</span>
                             </div>
@@ -541,7 +604,7 @@
                                     <div class="absolute -top-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-2 py-1 text-[10px] text-center w-16 shadow-sm truncate">
                                         Coffee? ☕️
                                     </div>
-                                    <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&fit=crop" class="w-14 h-14 rounded-full border border-gray-200 dark:border-gray-700 mt-2">
+                                    <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop" class="w-14 h-14 rounded-full border border-gray-200 dark:border-gray-700 mt-2">
                                 </div>
                                 <span class="text-xs text-gray-500 mt-1 truncate w-full text-center">coffee_l...</span>
                             </div>
@@ -556,7 +619,7 @@
                         <!-- Global Chat Item (Private Room Creation Placeholder) -->
                         <div class="flex items-center gap-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 px-2 rounded-lg" onclick="joinRoom('global_public', 'Global Chat')">
                             <div class="relative">
-                                <img src="https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=100&h=100&fit=crop" class="w-14 h-14 rounded-full object-cover">
+                                <img src="https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=140&h=140&fit=crop" onerror="this.onerror=null; this.src='https://placehold.co/140x140/9ca3af/ffffff?text=🌎';" class="w-14 h-14 rounded-full object-cover">
                                  <div class="absolute bottom-0 right-0 bg-green-500 border-2 border-white dark:border-black rounded-full w-3.5 h-3.5"></div>
                             </div>
                             <div class="flex-1">
@@ -704,8 +767,8 @@
             </div>
         </div>
 
-        <!-- Controls -->
-        <div class="flex justify-center mb-8 gap-10">
+        <!-- Call Controls -->
+        <div id="call-connected-ui" class="w-full flex justify-center mb-8 gap-10 hidden">
             <div class="flex flex-col items-center gap-2">
                 <div class="w-14 h-14 bg-gray-700/50 rounded-full flex items-center justify-center cursor-pointer hover:bg-gray-600/70">
                     <i data-lucide="mic-off" class="w-6 h-6"></i>
@@ -726,6 +789,23 @@
                     <i data-lucide="volume-2" class="w-6 h-6"></i>
                 </div>
                 <span class="text-xs">Speaker</span>
+            </div>
+        </div>
+        
+        <!-- Incoming Call UI (New Feature) -->
+        <div id="call-incoming-ui" class="w-full flex justify-around mb-8 hidden">
+            <div class="flex flex-col items-center gap-2 cursor-pointer" onclick="declineCall()">
+                <div class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center shadow-xl hover:bg-red-600">
+                    <i data-lucide="x" class="w-8 h-8"></i>
+                </div>
+                <span class="text-xs">Decline</span>
+            </div>
+            
+            <div class="flex flex-col items-center gap-2 cursor-pointer" onclick="acceptCall()">
+                <div class="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center shadow-xl hover:bg-green-600">
+                    <i data-lucide="phone" class="w-8 h-8"></i>
+                </div>
+                <span class="text-xs">Accept</span>
             </div>
         </div>
         
